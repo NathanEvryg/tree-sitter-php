@@ -1,0 +1,69 @@
+// PHP grammar (php_only dialect) - native DSL.
+// Mirrors `defineGrammar('php_only')` from ../common/define-grammar.js.
+// All shared rules and externals come from ../common/grammar.tsg; this file
+// only owns the grammar config block and the dialect-specific `program`.
+
+let c = import("../common/grammar.tsg")
+let kws = import("../common/keywords.tsg")
+
+grammar {
+    language: "php_only",
+
+    conflicts: [
+        [_array_destructing, array_creation_expression],
+        [_array_destructing_element, array_element_initializer],
+        [primary_expression, _array_destructing_element],
+
+        [type, union_type, intersection_type, disjunctive_normal_form_type],
+        [union_type, disjunctive_normal_form_type],
+        [intersection_type],
+        [if_statement],
+
+        [namespace_name],
+        [heredoc_body],
+    ],
+
+    externals: [
+        c::_automatic_semicolon,
+        c::encapsed_string_chars,
+        c::encapsed_string_chars_after_variable,
+        c::execution_string_chars,
+        c::execution_string_chars_after_variable,
+        c::encapsed_string_chars_heredoc,
+        c::encapsed_string_chars_after_variable_heredoc,
+        c::_eof,
+        c::heredoc_start,
+        c::heredoc_end,
+        c::nowdoc_string,
+        // Unused token used to indicate error recovery mode.
+        c::sentinel_error,
+    ],
+
+    extras: [
+        comment,
+        regexp(r"[\s\u00A0\u200B\u2060\uFEFF]"),
+    ],
+
+    inline: [_variable, _namespace_use_type],
+
+    reserved: {
+        global: kws::BASE_RESERVED_KEYWORD_SET,
+        classes: append(
+            kws::BASE_RESERVED_KEYWORD_SET,
+            kws::OTHER_RESERVED_KEYWORD_SET,
+        ),
+        nothing: [],
+    },
+
+    supertypes: [statement, expression, primary_expression, type, literal],
+
+    word: name,
+}
+
+rule program {
+    seq(
+        optional(php_tag),
+        repeat(statement),
+        optional(php_end_tag),
+    )
+}

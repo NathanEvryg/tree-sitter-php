@@ -1,0 +1,19 @@
+// Shared helpers for the PHP grammar.
+// Mirrors the functions defined at the bottom of common/define-grammar.js.
+
+// Case-insensitive keyword aliased back to its literal spelling.
+// Mirrors the JS `keyword(word, true)` helper.
+macro kw(s: str_t) rule_t { alias(regexp(s, "i"), s) }
+
+// One or more `r` separated by commas.
+macro commaSep1(r: rule_t) rule_t { seq(r, repeat(seq(",", r))) }
+
+// Zero or more `r` separated by commas.
+macro commaSep(r: rule_t) rule_t { optional(commaSep1(r)) }
+
+// One or more `r` separated by `|`.
+macro pipeSep1(r: rule_t) rule_t { seq(r, repeat(seq("|", r))) }
+
+// One or more `r` separated by `&` (token to keep `&` from being lexed as
+// reference-modifier).
+macro ampSep1(r: rule_t) rule_t { seq(r, repeat(seq(token("&"), r))) }

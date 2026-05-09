@@ -1,0 +1,1623 @@
+// Shared PHP grammar rules. Mirrors the bulk of common/define-grammar.js.
+// Both php_only/grammar.tsg and (transitively, via inherit) php/grammar.tsg
+// pull these in via `import("../common/grammar.tsg")`.
+//
+// The dialect-specific bits (grammar config block, `program` rule, and
+// php-only `text_interpolation`) live in the per-dialect grammar.tsg files.
+
+let util = import("util.tsg")
+
+let PREC = {
+    COMMA: -1,
+    CAST: -1,
+    LOGICAL_OR_2: 1,
+    LOGICAL_XOR: 2,
+    LOGICAL_AND_2: 3,
+    ASSIGNMENT: 4,
+    TERNARY: 5,
+    NULL_COALESCE: 6,
+    LOGICAL_OR_1: 7,
+    LOGICAL_AND_1: 8,
+    BITWISE_OR: 9,
+    BITWISE_XOR: 10,
+    BITWISE_AND: 11,
+    EQUALITY: 12,
+    INEQUALITY: 13,
+    PIPE: 14,
+    CONCAT: 15,
+    SHIFT: 16,
+    PLUS: 17,
+    TIMES: 18,
+    EXPONENTIAL: 19,
+    NEG: 20,
+    INSTANCEOF: 21,
+    INC: 22,
+    SCOPE: 23,
+    NEW: 24,
+    CALL: 25,
+    MEMBER: 26,
+    DEREF: 27,
+}
+
+// ---------------------------------------------------------------------------
+// Externals (declared here so helper rules can reference them by name).
+// The grammar config block lists them in `externals: [...]`.
+// ---------------------------------------------------------------------------
+
+external _automatic_semicolon
+external encapsed_string_chars
+external encapsed_string_chars_after_variable
+external execution_string_chars
+external execution_string_chars_after_variable
+external encapsed_string_chars_heredoc
+external encapsed_string_chars_after_variable_heredoc
+external _eof
+external heredoc_start
+external heredoc_end
+external nowdoc_string
+external sentinel_error
+
+// ---------------------------------------------------------------------------
+// Tokens shared by both dialects' `program` rule.
+// ---------------------------------------------------------------------------
+
+rule php_tag { regexp(r"<\?([pP][hH][pP]|=)?") }
+rule php_end_tag { "?>" }
+
+rule text {
+    repeat1(choice(
+        token(prec(-1, regexp(r"<"))),
+        token(prec(1, regexp(r"[^\s<][^<]*"))),
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// Statements
+// ---------------------------------------------------------------------------
+
+rule statement {
+    choice(
+        empty_statement,
+        compound_statement,
+        named_label_statement,
+        expression_statement,
+        if_statement,
+        switch_statement,
+        while_statement,
+        do_statement,
+        for_statement,
+        foreach_statement,
+        goto_statement,
+        continue_statement,
+        break_statement,
+        return_statement,
+        try_statement,
+        declare_statement,
+        echo_statement,
+        exit_statement,
+        unset_statement,
+        const_declaration,
+        function_definition,
+        class_declaration,
+        interface_declaration,
+        trait_declaration,
+        enum_declaration,
+        namespace_definition,
+        namespace_use_declaration,
+        global_declaration,
+        function_static_declaration,
+    )
+}
+
+rule empty_statement { prec(-1, ";") }
+
+rule reference_modifier { "&" }
+
+rule function_static_declaration {
+    seq(util::kw("static"), util::commaSep1(static_variable_declaration), _semicolon)
+}
+
+rule static_variable_declaration {
+    seq(
+        field(name, variable_name),
+        optional(seq("=", field(value, expression))),
+    )
+}
+
+rule global_declaration {
+    seq(util::kw("global"), util::commaSep1(_simple_variable), _semicolon)
+}
+
+rule namespace_definition {
+    seq(
+        util::kw("namespace"),
+        choice(
+            seq(field(name, namespace_name), _semicolon),
+            seq(
+                field(name, optional(namespace_name)),
+                field(body, compound_statement),
+            ),
+        ),
+    )
+}
+
+rule namespace_use_declaration {
+    seq(
+        util::kw("use"),
+        choice(
+            util::commaSep1(namespace_use_clause),
+            _namespace_use_group,
+        ),
+        _semicolon,
+    )
+}
+
+rule namespace_use_clause {
+    seq(
+        field(type, optional(_namespace_use_type)),
+        choice(name, qualified_name),
+        optional(seq(util::kw("as"), field(alias, name))),
+    )
+}
+
+rule _namespace_use_type { choice(util::kw("function"), util::kw("const")) }
+
+rule qualified_name {
+    seq(
+        field(prefix, seq(optional(r"\"), optional(namespace_name), r"\")),
+        reserved("classes", name),
+    )
+}
+
+rule relative_name {
+    seq(
+        field(prefix, seq(
+            util::kw("namespace"),
+            optional(seq(r"\", namespace_name)),
+            r"\",
+        )),
+        reserved("classes", name),
+    )
+}
+
+rule _name {
+    choice(
+        alias(regexp("static", "i"), name),
+        reserved("classes", name),
+        qualified_name,
+        relative_name,
+    )
+}
+
+rule namespace_name {
+    seq(
+        reserved("nothing", name),
+        repeat(seq(r"\", reserved("nothing", name))),
+    )
+}
+
+rule _namespace_use_group {
+    seq(
+        field(type, optional(_namespace_use_type)),
+        namespace_name,
+        r"\",
+        field(body, namespace_use_group),
+    )
+}
+
+rule namespace_use_group { seq("{", util::commaSep1(namespace_use_clause), "}") }
+
+rule trait_declaration {
+    seq(
+        optional(field(attributes, attribute_list)),
+        util::kw("trait"),
+        field(name, reserved("classes", name)),
+        field(body, declaration_list),
+    )
+}
+
+rule interface_declaration {
+    seq(
+        optional(field(attributes, attribute_list)),
+        util::kw("interface"),
+        field(name, reserved("classes", name)),
+        optional(base_clause),
+        field(body, declaration_list),
+    )
+}
+
+rule base_clause { seq(util::kw("extends"), util::commaSep1(_name)) }
+
+rule enum_declaration {
+    prec_right(0, seq(
+        optional(field(attributes, attribute_list)),
+        util::kw("enum"),
+        field(name, reserved("classes", name)),
+        optional(seq(":", alias(choice("string", "int"), primitive_type))),
+        optional(class_interface_clause),
+        field(body, enum_declaration_list),
+    ))
+}
+
+rule enum_declaration_list { seq("{", repeat(_enum_member_declaration), "}") }
+
+rule _enum_member_declaration {
+    choice(
+        alias(_class_const_declaration, const_declaration),
+        enum_case,
+        method_declaration,
+        use_declaration,
+    )
+}
+
+rule enum_case {
+    seq(
+        optional(field(attributes, attribute_list)),
+        util::kw("case"),
+        field(name, reserved("nothing", name)),
+        optional(seq("=", field(value, expression))),
+        _semicolon,
+    )
+}
+
+rule class_declaration {
+    prec_right(0, seq(
+        optional(field(attributes, attribute_list)),
+        repeat(_modifier),
+        util::kw("class"),
+        field(name, reserved("classes", name)),
+        optional(base_clause),
+        optional(class_interface_clause),
+        field(body, declaration_list),
+    ))
+}
+
+rule declaration_list { seq("{", repeat(_member_declaration), "}") }
+
+rule final_modifier { util::kw("final") }
+rule abstract_modifier { util::kw("abstract") }
+rule readonly_modifier { util::kw("readonly") }
+
+rule class_interface_clause { seq(util::kw("implements"), util::commaSep1(_name)) }
+
+rule _member_declaration {
+    choice(
+        alias(_class_const_declaration, const_declaration),
+        property_declaration,
+        method_declaration,
+        use_declaration,
+    )
+}
+
+rule const_declaration {
+    seq(
+        optional(field(attributes, attribute_list)),
+        repeat(_modifier),
+        util::kw("const"),
+        optional(field(type, type)),
+        util::commaSep1(alias(_const_element, const_element)),
+        _semicolon,
+    )
+}
+
+rule _class_const_declaration {
+    seq(
+        optional(field(attributes, attribute_list)),
+        optional(final_modifier),
+        repeat(_modifier),
+        util::kw("const"),
+        optional(field(type, type)),
+        util::commaSep1(alias(_class_const_element, const_element)),
+        _semicolon,
+    )
+}
+
+rule property_declaration {
+    seq(
+        optional(field(attributes, attribute_list)),
+        repeat1(_modifier),
+        optional(field(type, type)),
+        util::commaSep1(property_element),
+        choice(_semicolon, property_hook_list),
+    )
+}
+
+rule _modifier {
+    prec_left(0, choice(
+        var_modifier,
+        visibility_modifier,
+        static_modifier,
+        final_modifier,
+        abstract_modifier,
+        readonly_modifier,
+    ))
+}
+
+rule property_element {
+    seq(
+        field(name, variable_name),
+        optional(seq("=", field(default_value, expression))),
+    )
+}
+
+rule property_hook_list { seq("{", repeat(property_hook), "}") }
+
+rule property_hook {
+    seq(
+        optional(field(attributes, attribute_list)),
+        optional(field(final, final_modifier)),
+        optional(field(reference_modifier, reference_modifier)),
+        name,
+        optional(field(parameters, formal_parameters)),
+        _property_hook_body,
+    )
+}
+
+rule _property_hook_body {
+    choice(
+        seq("=>", field(body, expression), _semicolon),
+        field(body, compound_statement),
+        _semicolon,
+    )
+}
+
+rule method_declaration {
+    seq(
+        optional(field(attributes, attribute_list)),
+        repeat(_modifier),
+        util::kw("function"),
+        optional(reference_modifier),
+        field(name, reserved("nothing", name)),
+        field(parameters, formal_parameters),
+        optional(_return_type),
+        choice(
+            field(body, compound_statement),
+            _semicolon,
+        ),
+    )
+}
+
+rule var_modifier { regexp("var", "i") }
+rule static_modifier { util::kw("static") }
+
+rule use_declaration {
+    seq(
+        util::kw("use"),
+        util::commaSep1(_name),
+        choice(use_list, _semicolon),
+    )
+}
+
+rule use_list {
+    seq(
+        "{",
+        repeat(seq(
+            choice(use_instead_of_clause, use_as_clause),
+            _semicolon,
+        )),
+        "}",
+    )
+}
+
+rule use_instead_of_clause {
+    prec_left(0, seq(
+        class_constant_access_expression,
+        util::kw("insteadof"),
+        name,
+    ))
+}
+
+rule use_as_clause {
+    seq(
+        choice(class_constant_access_expression, name),
+        util::kw("as"),
+        choice(
+            seq(optional(visibility_modifier), name),
+            seq(visibility_modifier, optional(name)),
+        ),
+    )
+}
+
+rule visibility_modifier {
+    seq(
+        choice(util::kw("public"), util::kw("protected"), util::kw("private")),
+        optional(seq(
+            token_immediate("("),
+            alias(name, operation),
+            token_immediate(")"),
+        )),
+    )
+}
+
+rule function_definition {
+    seq(
+        optional(field(attributes, attribute_list)),
+        util::kw("function"),
+        optional(reference_modifier),
+        field(name, name),
+        field(parameters, formal_parameters),
+        optional(_return_type),
+        field(body, compound_statement),
+    )
+}
+
+rule anonymous_function {
+    seq(_anonymous_function_header, field(body, compound_statement))
+}
+
+rule anonymous_function_use_clause {
+    seq(
+        util::kw("use"),
+        "(",
+        util::commaSep1(choice(by_ref, variable_name)),
+        optional(","),
+        ")",
+    )
+}
+
+rule _anonymous_function_header {
+    seq(
+        optional(field(attributes, attribute_list)),
+        optional(field(static_modifier, static_modifier)),
+        util::kw("function"),
+        optional(field(reference_modifier, reference_modifier)),
+        field(parameters, formal_parameters),
+        optional(anonymous_function_use_clause),
+        optional(_return_type),
+    )
+}
+
+rule _arrow_function_header {
+    seq(
+        optional(field(attributes, attribute_list)),
+        optional(field(static_modifier, static_modifier)),
+        util::kw("fn"),
+        optional(field(reference_modifier, reference_modifier)),
+        field(parameters, formal_parameters),
+        optional(_return_type),
+    )
+}
+
+rule arrow_function {
+    seq(_arrow_function_header, "=>", field(body, expression))
+}
+
+rule formal_parameters {
+    seq(
+        "(",
+        util::commaSep(choice(
+            simple_parameter,
+            variadic_parameter,
+            property_promotion_parameter,
+        )),
+        optional(","),
+        ")",
+    )
+}
+
+rule property_promotion_parameter {
+    seq(
+        optional(field(attributes, attribute_list)),
+        repeat1(field(visibility, visibility_modifier)),
+        optional(field(readonly, readonly_modifier)),
+        optional(field(type, type)),
+        field(name, choice(by_ref, variable_name)),
+        optional(seq("=", field(default_value, expression))),
+        optional(property_hook_list),
+    )
+}
+
+rule simple_parameter {
+    seq(
+        optional(field(attributes, attribute_list)),
+        field(type, optional(type)),
+        optional(field(reference_modifier, reference_modifier)),
+        field(name, variable_name),
+        optional(seq("=", field(default_value, expression))),
+    )
+}
+
+rule variadic_parameter {
+    seq(
+        optional(field(attributes, attribute_list)),
+        field(type, optional(type)),
+        optional(field(reference_modifier, reference_modifier)),
+        "...",
+        field(name, variable_name),
+    )
+}
+
+rule type {
+    choice(_types, union_type, intersection_type, disjunctive_normal_form_type)
+}
+
+rule _types { choice(optional_type, named_type, primitive_type) }
+
+rule named_type {
+    choice(reserved("classes", name), qualified_name, relative_name)
+}
+
+rule optional_type { seq("?", choice(named_type, primitive_type)) }
+
+rule bottom_type { regexp("never", "i") }
+
+rule union_type { util::pipeSep1(_types) }
+
+rule intersection_type { util::ampSep1(_types) }
+
+rule disjunctive_normal_form_type {
+    prec_dynamic(-1, util::pipeSep1(choice(
+        seq("(", intersection_type, ")"),
+        _types,
+    )))
+}
+
+rule primitive_type {
+    choice(
+        "array",
+        "bool",
+        regexp("callable", "i"),
+        regexp("false", "i"),
+        "float",
+        "int",
+        regexp("iterable", "i"),
+        regexp("mixed", "i"),
+        "null",
+        "object",
+        "string",
+        regexp("true", "i"),
+        regexp("void", "i"),
+    )
+}
+
+rule cast_type {
+    choice(
+        regexp("array", "i"),
+        regexp("binary", "i"),
+        regexp("bool", "i"),
+        regexp("boolean", "i"),
+        regexp("double", "i"),
+        regexp("float", "i"),
+        regexp("int", "i"),
+        regexp("integer", "i"),
+        regexp("object", "i"),
+        regexp("real", "i"),
+        regexp("string", "i"),
+        regexp("unset", "i"),
+    )
+}
+
+rule _return_type { seq(":", field(return_type, choice(type, bottom_type))) }
+
+rule _const_element { seq(name, "=", expression) }
+rule _class_const_element { seq(reserved("nothing", name), "=", expression) }
+
+rule echo_statement { seq(util::kw("echo"), _expressions, _semicolon) }
+
+rule exit_statement {
+    seq(
+        util::kw("exit"),
+        optional(seq("(", optional(expression), ")")),
+        _semicolon,
+    )
+}
+
+rule unset_statement {
+    seq(
+        "unset",
+        "(",
+        util::commaSep1(_variable),
+        optional(","),
+        ")",
+        _semicolon,
+    )
+}
+
+rule declare_statement {
+    seq(
+        util::kw("declare"),
+        "(",
+        declare_directive,
+        ")",
+        choice(
+            statement,
+            _semicolon,
+            seq(":", repeat(statement), util::kw("enddeclare"), _semicolon),
+        ),
+    )
+}
+
+rule declare_directive {
+    seq(choice("ticks", "encoding", "strict_types"), "=", literal)
+}
+
+rule literal {
+    choice(integer, float, _string, boolean, null)
+}
+
+rule float {
+    regexp(r"\d*(_\d+)*((\.\d*(_\d+)*)?([eE][\+-]?\d+(_\d+)*)|(\.\d*(_\d+)*)([eE][\+-]?\d+(_\d+)*)?)")
+}
+
+rule try_statement {
+    seq(
+        util::kw("try"),
+        field(body, compound_statement),
+        repeat1(choice(catch_clause, finally_clause)),
+    )
+}
+
+rule catch_clause {
+    seq(
+        util::kw("catch"),
+        "(",
+        field(type, type_list),
+        optional(field(name, variable_name)),
+        ")",
+        field(body, compound_statement),
+    )
+}
+
+rule type_list { util::pipeSep1(named_type) }
+
+rule finally_clause {
+    seq(util::kw("finally"), field(body, compound_statement))
+}
+
+rule goto_statement { seq(util::kw("goto"), name, _semicolon) }
+
+rule continue_statement {
+    seq(util::kw("continue"), optional(expression), _semicolon)
+}
+
+rule break_statement {
+    seq(util::kw("break"), optional(expression), _semicolon)
+}
+
+rule integer {
+    token(choice(
+        regexp(r"[1-9]\d*(_\d+)*"),
+        regexp(r"0[oO]?[0-7]*(_[0-7]+)*"),
+        regexp(r"0[xX][0-9a-fA-F]+(_[0-9a-fA-F]+)*"),
+        regexp(r"0[bB][01]+(_[01]+)*"),
+    ))
+}
+
+rule return_statement {
+    seq(util::kw("return"), optional(expression), _semicolon)
+}
+
+rule throw_expression { seq(util::kw("throw"), expression) }
+
+rule while_statement {
+    seq(
+        util::kw("while"),
+        field(condition, parenthesized_expression),
+        choice(
+            field(body, statement),
+            seq(field(body, colon_block), util::kw("endwhile"), _semicolon),
+        ),
+    )
+}
+
+rule do_statement {
+    seq(
+        util::kw("do"),
+        field(body, statement),
+        util::kw("while"),
+        field(condition, parenthesized_expression),
+        _semicolon,
+    )
+}
+
+rule for_statement {
+    seq(
+        util::kw("for"),
+        "(",
+        field(initialize, optional(_expressions)),
+        ";",
+        field(condition, optional(_expressions)),
+        ";",
+        field(update, optional(_expressions)),
+        ")",
+        choice(
+            _semicolon,
+            field(body, statement),
+            seq(
+                ":",
+                field(body, repeat(statement)),
+                util::kw("endfor"),
+                _semicolon,
+            ),
+        ),
+    )
+}
+
+rule _expressions { choice(expression, sequence_expression) }
+
+rule sequence_expression {
+    prec(PREC.COMMA, seq(expression, ",", choice(sequence_expression, expression)))
+}
+
+rule foreach_statement {
+    seq(
+        util::kw("foreach"),
+        "(",
+        expression,
+        util::kw("as"),
+        choice(alias(foreach_pair, pair), _foreach_value),
+        ")",
+        choice(
+            _semicolon,
+            field(body, statement),
+            seq(
+                field(body, colon_block),
+                util::kw("endforeach"),
+                _semicolon,
+            ),
+        ),
+    )
+}
+
+rule foreach_pair { seq(expression, "=>", _foreach_value) }
+
+rule _foreach_value { choice(by_ref, expression, list_literal) }
+
+rule if_statement {
+    seq(
+        util::kw("if"),
+        field(condition, parenthesized_expression),
+        choice(
+            seq(
+                field(body, statement),
+                repeat(field(alternative, else_if_clause)),
+                optional(field(alternative, else_clause)),
+            ),
+            seq(
+                field(body, colon_block),
+                repeat(field(alternative, alias(else_if_clause_2, else_if_clause))),
+                optional(field(alternative, alias(else_clause_2, else_clause))),
+                util::kw("endif"),
+                _semicolon,
+            ),
+        ),
+    )
+}
+
+rule colon_block { seq(":", repeat(statement)) }
+
+rule else_if_clause {
+    seq(
+        util::kw("elseif"),
+        field(condition, parenthesized_expression),
+        field(body, statement),
+    )
+}
+
+rule else_clause { seq(util::kw("else"), field(body, statement)) }
+
+rule else_if_clause_2 {
+    seq(
+        util::kw("elseif"),
+        field(condition, parenthesized_expression),
+        field(body, colon_block),
+    )
+}
+
+rule else_clause_2 { seq(util::kw("else"), field(body, colon_block)) }
+
+rule match_expression {
+    seq(
+        util::kw("match"),
+        field(condition, parenthesized_expression),
+        field(body, match_block),
+    )
+}
+
+rule match_block {
+    prec_left(0, seq(
+        "{",
+        util::commaSep(choice(match_conditional_expression, match_default_expression)),
+        optional(","),
+        "}",
+    ))
+}
+
+rule match_condition_list { seq(util::commaSep1(expression), optional(",")) }
+
+rule match_conditional_expression {
+    seq(
+        field(conditional_expressions, match_condition_list),
+        "=>",
+        field(return_expression, expression),
+    )
+}
+
+rule match_default_expression {
+    seq(util::kw("default"), "=>", field(return_expression, expression))
+}
+
+rule switch_statement {
+    seq(
+        util::kw("switch"),
+        field(condition, parenthesized_expression),
+        field(body, switch_block),
+    )
+}
+
+rule switch_block {
+    choice(
+        seq("{", repeat(choice(case_statement, default_statement)), "}"),
+        seq(
+            ":",
+            repeat(choice(case_statement, default_statement)),
+            util::kw("endswitch"),
+            _semicolon,
+        ),
+    )
+}
+
+rule case_statement {
+    seq(
+        util::kw("case"),
+        field(value, expression),
+        choice(":", ";"),
+        repeat(statement),
+    )
+}
+
+rule default_statement {
+    seq(util::kw("default"), choice(":", ";"), repeat(statement))
+}
+
+rule compound_statement { seq("{", repeat(statement), "}") }
+
+rule named_label_statement { seq(name, ":") }
+
+rule expression_statement { seq(expression, _semicolon) }
+
+rule expression {
+    choice(
+        conditional_expression,
+        match_expression,
+        augmented_assignment_expression,
+        assignment_expression,
+        reference_assignment_expression,
+        yield_expression,
+        _unary_expression,
+        error_suppression_expression,
+        binary_expression,
+        include_expression,
+        include_once_expression,
+        require_expression,
+        require_once_expression,
+    )
+}
+
+rule _unary_expression {
+    choice(
+        clone_expression,
+        primary_expression,
+        unary_op_expression,
+        cast_expression,
+    )
+}
+
+rule unary_op_expression {
+    prec_left(PREC.NEG, seq(
+        field(operator, choice("+", "-", "~", "!")),
+        field(argument, expression),
+    ))
+}
+
+rule error_suppression_expression {
+    prec(PREC.INC, seq("@", expression))
+}
+
+rule clone_expression { seq(util::kw("clone"), primary_expression) }
+
+rule primary_expression {
+    choice(
+        _variable,
+        literal,
+        class_constant_access_expression,
+        qualified_name,
+        relative_name,
+        name,
+        array_creation_expression,
+        print_intrinsic,
+        anonymous_function,
+        arrow_function,
+        object_creation_expression,
+        update_expression,
+        shell_command_expression,
+        parenthesized_expression,
+        throw_expression,
+    )
+}
+
+rule parenthesized_expression { seq("(", expression, ")") }
+
+rule class_constant_access_expression {
+    seq(
+        _scope_resolution_qualifier,
+        "::",
+        choice(
+            reserved("nothing", name),
+            seq("{", alias(expression, name), "}"),
+        ),
+    )
+}
+
+rule print_intrinsic { seq(util::kw("print"), expression) }
+
+rule object_creation_expression {
+    choice(_new_dereferencable_expression, _new_non_dereferencable_expression)
+}
+
+rule _new_non_dereferencable_expression {
+    prec_right(PREC.NEW, seq(util::kw("new"), _class_name_reference))
+}
+
+rule _new_dereferencable_expression {
+    prec_right(PREC.NEW, seq(
+        util::kw("new"),
+        choice(
+            seq(_class_name_reference, arguments),
+            anonymous_class,
+        ),
+    ))
+}
+
+rule _class_name_reference {
+    choice(_name, _new_variable, parenthesized_expression)
+}
+
+rule anonymous_class {
+    prec_right(0, seq(
+        optional(field(attributes, attribute_list)),
+        repeat(_modifier),
+        util::kw("class"),
+        optional(arguments),
+        optional(base_clause),
+        optional(class_interface_clause),
+        field(body, declaration_list),
+    ))
+}
+
+rule update_expression {
+    prec_left(PREC.INC, choice(
+        seq(field(operator, choice("--", "++")), field(argument, _variable)),
+        seq(field(argument, _variable), field(operator, choice("--", "++"))),
+    ))
+}
+
+rule cast_expression {
+    prec(PREC.CAST, seq(
+        "(",
+        field(type, cast_type),
+        ")",
+        field(value, choice(
+            _unary_expression,
+            include_expression,
+            include_once_expression,
+            error_suppression_expression,
+        )),
+    ))
+}
+
+rule cast_variable {
+    prec(PREC.CAST, seq(
+        "(", field(type, cast_type), ")",
+        field(value, _variable),
+    ))
+}
+
+rule assignment_expression {
+    prec_right(PREC.ASSIGNMENT, seq(
+        field(left, choice(_variable, list_literal)),
+        "=",
+        field(right, expression),
+    ))
+}
+
+rule reference_assignment_expression {
+    prec_right(PREC.ASSIGNMENT, seq(
+        field(left, choice(_variable, list_literal)),
+        "=",
+        "&",
+        field(right, expression),
+    ))
+}
+
+rule conditional_expression {
+    prec_left(PREC.TERNARY, seq(
+        field(condition, expression),
+        "?",
+        field(body, optional(expression)),
+        ":",
+        field(alternative, expression),
+    ))
+}
+
+rule augmented_assignment_expression {
+    prec_right(PREC.ASSIGNMENT, seq(
+        field(left, _variable),
+        field(operator, choice(
+            "**=", "*=", "/=", "%=", "+=", "-=",
+            ".=", "<<=", ">>=", "&=", "^=", "|=", "??=",
+        )),
+        field(right, expression),
+    ))
+}
+
+rule _variable {
+    choice(
+        alias(cast_variable, cast_expression),
+        _new_variable,
+        _callable_variable,
+        scoped_property_access_expression,
+        member_access_expression,
+        nullsafe_member_access_expression,
+    )
+}
+
+rule _variable_member_access_expression {
+    prec(PREC.MEMBER, seq(
+        field(object, _new_variable),
+        "->",
+        _member_name,
+    ))
+}
+
+rule member_access_expression {
+    prec(PREC.MEMBER, seq(
+        field(object, _dereferencable_expression),
+        "->",
+        _member_name,
+    ))
+}
+
+rule _variable_nullsafe_member_access_expression {
+    prec(PREC.MEMBER, seq(
+        field(object, _new_variable),
+        "?->",
+        _member_name,
+    ))
+}
+
+rule nullsafe_member_access_expression {
+    prec(PREC.MEMBER, seq(
+        field(object, _dereferencable_expression),
+        "?->",
+        _member_name,
+    ))
+}
+
+rule _variable_scoped_property_access_expression {
+    prec(PREC.MEMBER, seq(
+        field(scope, choice(_name, _new_variable)),
+        "::",
+        field(name, _simple_variable),
+    ))
+}
+
+rule scoped_property_access_expression {
+    prec(PREC.MEMBER, seq(
+        field(scope, _scope_resolution_qualifier),
+        "::",
+        field(name, _simple_variable),
+    ))
+}
+
+rule list_literal { choice(_list_destructing, _array_destructing) }
+
+rule _list_destructing {
+    seq(
+        util::kw("list"),
+        "(",
+        util::commaSep1(optional(choice(
+            alias(_list_destructing, list_literal),
+            _variable,
+            by_ref,
+            seq(
+                expression,
+                "=>",
+                choice(
+                    alias(_list_destructing, list_literal),
+                    _variable,
+                    by_ref,
+                ),
+            ),
+        ))),
+        ")",
+    )
+}
+
+rule _array_destructing {
+    seq("[", util::commaSep1(optional(_array_destructing_element)), "]")
+}
+
+rule _array_destructing_element {
+    choice(
+        choice(
+            alias(_array_destructing, list_literal),
+            _variable,
+            by_ref,
+        ),
+        seq(
+            expression,
+            "=>",
+            choice(
+                alias(_array_destructing, list_literal),
+                _variable,
+                by_ref,
+            ),
+        ),
+    )
+}
+
+rule function_call_expression {
+    prec(PREC.CALL, seq(
+        field(function, choice(_name, _callable_expression)),
+        field(arguments, arguments),
+    ))
+}
+
+rule _callable_expression {
+    choice(
+        _callable_variable,
+        parenthesized_expression,
+        _dereferencable_scalar,
+        alias(_new_dereferencable_expression, object_creation_expression),
+    )
+}
+
+rule scoped_call_expression {
+    prec(PREC.CALL, seq(
+        field(scope, _scope_resolution_qualifier),
+        "::",
+        _member_name,
+        field(arguments, arguments),
+    ))
+}
+
+rule _scope_resolution_qualifier {
+    choice(relative_scope, _name, _dereferencable_expression)
+}
+
+rule relative_scope {
+    prec(PREC.SCOPE, choice(
+        util::kw("self"),
+        util::kw("parent"),
+        util::kw("static"),
+    ))
+}
+
+rule variadic_placeholder { "..." }
+
+rule argument_placeholder { "?" }
+
+rule arguments {
+    seq(
+        "(",
+        optional(seq(
+            util::commaSep1(choice(argument, variadic_placeholder)),
+            optional(","),
+        )),
+        ")",
+    )
+}
+
+rule argument {
+    seq(
+        optional(_argument_name),
+        optional(field(reference_modifier, reference_modifier)),
+        choice(
+            alias(relative_scope, name),
+            variadic_unpacking,
+            expression,
+            argument_placeholder,
+        ),
+    )
+}
+
+rule _argument_name {
+    seq(
+        field(name, alias(
+            choice(
+                reserved("nothing", name),
+                regexp("array", "i"),
+                regexp("fn", "i"),
+                regexp("function", "i"),
+                regexp("match", "i"),
+                regexp("namespace", "i"),
+                regexp("null", "i"),
+                regexp("static", "i"),
+                regexp("throw", "i"),
+                regexp("parent", "i"),
+                regexp("self", "i"),
+                regexp("true|false", "i"),
+            ),
+            name,
+        )),
+        ":",
+    )
+}
+
+rule member_call_expression {
+    prec(PREC.CALL, seq(
+        field(object, _dereferencable_expression),
+        "->",
+        _member_name,
+        field(arguments, arguments),
+    ))
+}
+
+rule nullsafe_member_call_expression {
+    prec(PREC.CALL, seq(
+        field(object, _dereferencable_expression),
+        "?->",
+        _member_name,
+        field(arguments, arguments),
+    ))
+}
+
+rule variadic_unpacking { seq("...", expression) }
+
+rule _member_name {
+    choice(
+        field(name, choice(reserved("nothing", name), _simple_variable)),
+        seq("{", field(name, expression), "}"),
+    )
+}
+
+rule _variable_subscript_expression {
+    seq(_new_variable, seq("[", optional(expression), "]"))
+}
+
+rule _dereferencable_subscript_expression {
+    seq(_dereferencable_expression, seq("[", optional(expression), "]"))
+}
+
+rule _dereferencable_expression {
+    prec(PREC.DEREF, choice(
+        _variable,
+        alias(_new_dereferencable_expression, object_creation_expression),
+        class_constant_access_expression,
+        parenthesized_expression,
+        _dereferencable_scalar,
+        _name,
+    ))
+}
+
+rule _dereferencable_scalar {
+    prec(PREC.DEREF, choice(array_creation_expression, _string))
+}
+
+rule array_creation_expression {
+    choice(
+        seq(util::kw("array"), "(", util::commaSep(array_element_initializer), optional(","), ")"),
+        seq("[", util::commaSep(array_element_initializer), optional(","), "]"),
+    )
+}
+
+rule attribute_group {
+    seq("#[", util::commaSep1(attribute), optional(","), "]")
+}
+
+rule attribute_list { repeat1(attribute_group) }
+
+rule attribute {
+    seq(_name, optional(field(parameters, arguments)))
+}
+
+rule _complex_string_part { seq("{", expression, "}") }
+
+rule _simple_string_member_access_expression {
+    prec(PREC.MEMBER, seq(
+        field(object, variable_name),
+        "->",
+        field(name, name),
+    ))
+}
+
+rule _simple_string_subscript_unary_expression {
+    prec_left(0, seq("-", integer))
+}
+
+rule _simple_string_array_access_argument {
+    choice(
+        integer,
+        alias(_simple_string_subscript_unary_expression, unary_op_expression),
+        name,
+        variable_name,
+    )
+}
+
+rule _simple_string_subscript_expression {
+    prec(PREC.DEREF, seq(
+        variable_name,
+        seq("[", _simple_string_array_access_argument, "]"),
+    ))
+}
+
+rule _simple_string_part {
+    choice(
+        alias(_simple_string_member_access_expression, member_access_expression),
+        _simple_variable,
+        alias(_simple_string_subscript_expression, subscript_expression),
+    )
+}
+
+// Note: remember to also update the is_escapable_sequence method in the
+// external scanner whenever changing these rules.
+rule escape_sequence {
+    token_immediate(seq(
+        r"\",
+        choice(
+            "n", "r", "t", "v", "e", "f", r"\",
+            regexp(r"\$"),
+            "\"",
+            "`",
+            regexp(r"[0-7]{1,3}"),
+            regexp(r"x[0-9A-Fa-f]{1,2}"),
+            regexp(r"u\{[0-9A-Fa-f]+\}"),
+        ),
+    ))
+}
+
+rule _interpolated_string_body {
+    repeat1(choice(
+        escape_sequence,
+        seq(variable_name, alias(encapsed_string_chars_after_variable, string_content)),
+        alias(encapsed_string_chars, string_content),
+        _simple_string_part,
+        _complex_string_part,
+        alias(r"\u", string_content),
+    ))
+}
+
+rule _interpolated_string_body_heredoc {
+    repeat1(choice(
+        escape_sequence,
+        seq(
+            variable_name,
+            alias(encapsed_string_chars_after_variable_heredoc, string_content),
+        ),
+        alias(encapsed_string_chars_heredoc, string_content),
+        _simple_string_part,
+        _complex_string_part,
+        alias(r"\u", string_content),
+    ))
+}
+
+rule encapsed_string {
+    prec_right(0, seq(
+        choice(regexp(r#"[bB]""#), "\""),
+        optional(_interpolated_string_body),
+        "\"",
+    ))
+}
+
+rule string {
+    seq(
+        choice(regexp(r"[bB]'"), "'"),
+        repeat(choice(
+            alias(token(choice(r"\\", r"\'")), escape_sequence),
+            string_content,
+        )),
+        "'",
+    )
+}
+
+rule string_content {
+    prec_right(0, repeat1(token_immediate(prec(1, regexp(r"\\?[^'\\]+")))))
+}
+
+rule heredoc_body {
+    seq(
+        _new_line,
+        repeat1(prec_right(0, seq(
+            optional(_new_line),
+            _interpolated_string_body_heredoc,
+        ))),
+    )
+}
+
+rule heredoc {
+    seq(
+        token("<<<"),
+        optional("\""),
+        field(identifier, heredoc_start),
+        optional(token_immediate("\"")),
+        choice(
+            seq(field(value, heredoc_body), _new_line),
+            field(value, optional(heredoc_body)),
+        ),
+        field(end_tag, heredoc_end),
+    )
+}
+
+rule _new_line { regexp(r"\r?\n|\r") }
+
+rule nowdoc_body { seq(_new_line, repeat1(nowdoc_string)) }
+
+rule nowdoc {
+    seq(
+        token("<<<"),
+        "'",
+        field(identifier, heredoc_start),
+        token_immediate("'"),
+        choice(
+            seq(field(value, nowdoc_body), _new_line),
+            field(value, optional(nowdoc_body)),
+        ),
+        field(end_tag, heredoc_end),
+    )
+}
+
+rule _interpolated_execution_operator_body {
+    repeat1(choice(
+        escape_sequence,
+        seq(variable_name, alias(execution_string_chars_after_variable, string_content)),
+        alias(execution_string_chars, string_content),
+        _simple_string_part,
+        _complex_string_part,
+        alias(r"\u", string_content),
+    ))
+}
+
+rule shell_command_expression {
+    seq("`", optional(_interpolated_execution_operator_body), "`")
+}
+
+rule boolean { regexp("true|false", "i") }
+
+rule null { regexp("null", "i") }
+
+rule _string { choice(encapsed_string, string, heredoc, nowdoc) }
+
+rule dynamic_variable_name {
+    choice(
+        seq("$", _simple_variable),
+        seq("$", "{", expression, "}"),
+    )
+}
+
+rule _simple_variable { choice(variable_name, dynamic_variable_name) }
+
+rule _new_variable {
+    prec(1, choice(
+        _simple_variable,
+        alias(_variable_subscript_expression, subscript_expression),
+        alias(_variable_member_access_expression, member_access_expression),
+        alias(_variable_nullsafe_member_access_expression, nullsafe_member_access_expression),
+        alias(_variable_scoped_property_access_expression, scoped_property_access_expression),
+    ))
+}
+
+rule _callable_variable {
+    choice(
+        _simple_variable,
+        alias(_dereferencable_subscript_expression, subscript_expression),
+        member_call_expression,
+        nullsafe_member_call_expression,
+        function_call_expression,
+        scoped_call_expression,
+    )
+}
+
+rule variable_name { seq("$", reserved("nothing", name)) }
+
+rule by_ref { seq("&", _variable) }
+
+rule yield_expression {
+    prec_right(0, choice(
+        seq(util::kw("yield"), optional(array_element_initializer)),
+        seq(util::kw("yield from"), expression),
+    ))
+}
+
+rule array_element_initializer {
+    prec_right(0, choice(
+        choice(by_ref, expression),
+        seq(expression, "=>", choice(by_ref, expression)),
+        variadic_unpacking,
+    ))
+}
+
+rule binary_expression {
+    choice(
+        prec(PREC.INSTANCEOF, seq(
+            field(left, _unary_expression),
+            field(operator, util::kw("instanceof")),
+            field(right, _class_name_reference),
+        )),
+        prec_right(PREC.NULL_COALESCE, seq(
+            field(left, expression),
+            field(operator, "??"),
+            field(right, expression),
+        )),
+        prec_right(PREC.EXPONENTIAL, seq(
+            field(left, expression),
+            field(operator, "**"),
+            field(right, expression),
+        )),
+        for (op: rule_t, p: int_t) in [
+            (util::kw("and"), PREC.LOGICAL_AND_2),
+            (util::kw("or"), PREC.LOGICAL_OR_2),
+            (util::kw("xor"), PREC.LOGICAL_XOR),
+        ] {
+            prec_left(p, seq(
+                field(left, expression),
+                field(operator, op),
+                field(right, expression),
+            ))
+        },
+        for (op: str_t, p: int_t) in [
+            ("||", PREC.LOGICAL_OR_1),
+            ("&&", PREC.LOGICAL_AND_1),
+            ("|", PREC.BITWISE_OR),
+            ("^", PREC.BITWISE_XOR),
+            ("&", PREC.BITWISE_AND),
+            ("==", PREC.EQUALITY),
+            ("!=", PREC.EQUALITY),
+            ("<>", PREC.EQUALITY),
+            ("===", PREC.EQUALITY),
+            ("!==", PREC.EQUALITY),
+            ("<", PREC.INEQUALITY),
+            (">", PREC.INEQUALITY),
+            ("<=", PREC.INEQUALITY),
+            (">=", PREC.INEQUALITY),
+            ("<=>", PREC.EQUALITY),
+            ("|>", PREC.PIPE),
+            (".", PREC.CONCAT),
+            ("<<", PREC.SHIFT),
+            (">>", PREC.SHIFT),
+            ("+", PREC.PLUS),
+            ("-", PREC.PLUS),
+            ("*", PREC.TIMES),
+            ("/", PREC.TIMES),
+            ("%", PREC.TIMES),
+        ] {
+            prec_left(p, seq(
+                field(left, expression),
+                field(operator, op),
+                field(right, expression),
+            ))
+        },
+    )
+}
+
+rule include_expression { seq(util::kw("include"), expression) }
+rule include_once_expression { seq(util::kw("include_once"), expression) }
+rule require_expression { seq(util::kw("require"), expression) }
+rule require_once_expression { seq(util::kw("require_once"), expression) }
+
+// PHP officially only supports `^[a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]*$`
+// for identifiers, but a quirk in how PHP parses multi-byte characters
+// allows a much larger range. The character class below sidesteps the
+// whitespace characters in the `extras` array.
+// See https://www.php.net/manual/en/language.variables.basics.php
+rule name {
+    regexp(r"[_a-zA-Z\u0080-\u009f\u00a1-\u200a\u200c-\u205f\u2061-\ufefe\uff00-\uffff][_a-zA-Z\u0080-\u009f\u00a1-\u200a\u200c-\u205f\u2061-\ufefe\uff00-\uffff\d]*")
+}
+
+rule comment {
+    token(choice(
+        seq(
+            choice("//", regexp(r"#[^?\[?\r?\n]")),
+            repeat(regexp(r"[^?\r?\n]|\?[^>\r\n]")),
+            optional(regexp(r"\?\r?\n")),
+        ),
+        "#",
+        seq(
+            "/*",
+            regexp(r"[^*]*\*+([^/*][^*]*\*+)*"),
+            "/",
+        ),
+    ))
+}
+
+rule _semicolon { choice(_automatic_semicolon, ";") }

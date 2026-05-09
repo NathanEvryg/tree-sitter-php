@@ -1,0 +1,34 @@
+// Reserved keyword sets shared by both dialects.
+// Mirrors BASE_RESERVED_KEYWORD_SET and OTHER_RESERVED_KEYWORD_SET in
+// common/define-grammar.js. Each entry is `keyword(word, false)`, which is
+// a case-insensitive regex (no aliasing back to the literal).
+
+// The primary reserved keywords in PHP, but not in all contexts.
+// https://www.php.net/manual/en/reserved.keywords.php
+let BASE_RESERVED_KEYWORD_SET = [
+    for (kw: str_t) in [
+        "abstract", "and", "as", "break", "callable", "case",
+        "catch", "class", "clone", "const", "continue", "declare",
+        "default", "do", "echo", "else", "elseif", "enddeclare",
+        "endfor", "endforeach", "endif", "endswitch", "endwhile", "extends",
+        "final", "finally", "fn", "for", "foreach", "function",
+        "global", "goto", "if", "implements", "include", "include_once",
+        "instanceof", "insteadof", "interface", "match", "namespace", "new",
+        "or", "print", "private", "protected", "public", "readonly",
+        "require", "require_once", "return", "static", "switch", "throw",
+        "trait", "try", "use", "var", "while", "xor", "yield from", "yield",
+    ] {
+        regexp(kw, "i")
+    }
+]
+
+// Other keywords that are reserved in PHP, and cannot be used as class names.
+// https://www.php.net/manual/en/reserved.other-reserved-words.php
+let OTHER_RESERVED_KEYWORD_SET = [
+    for (kw: str_t) in [
+        "bool", "false", "float", "int", "iterable", "mixed",
+        "never", "null", "object", "string", "true", "void",
+    ] {
+        regexp(kw, "i")
+    }
+]

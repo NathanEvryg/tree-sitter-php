@@ -1,0 +1,25 @@
+// PHP grammar (php dialect) - native DSL.
+// Mirrors `defineGrammar('php')` from ../common/define-grammar.js. Inherits
+// from the php_only base; the only differences are the grammar name, an
+// extra `text_interpolation` extras entry, and a different `program` rule
+// that starts with optional text + a php tag.
+
+let base = inherit("../php_only/grammar.tsg")
+
+grammar {
+    language: "php",
+    inherits: base,
+
+    extras: append(grammar_config(base, extras), [text_interpolation]),
+}
+
+override rule program {
+    seq(
+        optional(text),
+        optional(seq(php_tag, repeat(statement))),
+    )
+}
+
+rule text_interpolation {
+    seq(php_end_tag, optional(text), choice(php_tag, base::_eof))
+}
