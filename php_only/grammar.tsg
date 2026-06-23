@@ -24,19 +24,19 @@ grammar {
     ],
 
     externals: [
-        c::_automatic_semicolon,
-        c::encapsed_string_chars,
-        c::encapsed_string_chars_after_variable,
-        c::execution_string_chars,
-        c::execution_string_chars_after_variable,
-        c::encapsed_string_chars_heredoc,
-        c::encapsed_string_chars_after_variable_heredoc,
-        c::_eof,
-        c::heredoc_start,
-        c::heredoc_end,
-        c::nowdoc_string,
+        _automatic_semicolon,
+        encapsed_string_chars,
+        encapsed_string_chars_after_variable,
+        execution_string_chars,
+        execution_string_chars_after_variable,
+        encapsed_string_chars_heredoc,
+        encapsed_string_chars_after_variable_heredoc,
+        _eof,
+        heredoc_start,
+        heredoc_end,
+        nowdoc_string,
         // Unused token used to indicate error recovery mode.
-        c::sentinel_error,
+        sentinel_error,
     ],
 
     extras: [
