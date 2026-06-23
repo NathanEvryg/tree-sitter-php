@@ -44,18 +44,18 @@ let PREC = {
 // The grammar config block lists them in `externals: [...]`.
 // ---------------------------------------------------------------------------
 
-external _automatic_semicolon
-external encapsed_string_chars
-external encapsed_string_chars_after_variable
-external execution_string_chars
-external execution_string_chars_after_variable
-external encapsed_string_chars_heredoc
-external encapsed_string_chars_after_variable_heredoc
-external _eof
-external heredoc_start
-external heredoc_end
-external nowdoc_string
-external sentinel_error
+expect _automatic_semicolon
+expect encapsed_string_chars
+expect encapsed_string_chars_after_variable
+expect execution_string_chars
+expect execution_string_chars_after_variable
+expect encapsed_string_chars_heredoc
+expect encapsed_string_chars_after_variable_heredoc
+expect _eof
+expect heredoc_start
+expect heredoc_end
+expect nowdoc_string
+expect sentinel_error
 
 // ---------------------------------------------------------------------------
 // Tokens shared by both dialects' `program` rule.
