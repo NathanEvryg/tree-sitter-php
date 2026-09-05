@@ -67,3 +67,7 @@ rule program {
         optional(php_end_tag),
     )
 }
+
+rule text_interpolation {
+    seq(php_end_tag, optional(text), choice(php_tag, _eof))
+}
