@@ -19,7 +19,3 @@ override rule program {
         optional(seq(php_tag, repeat(statement))),
     )
 }
-
-rule text_interpolation {
-    seq(php_end_tag, optional(text), choice(php_tag, base::_eof))
-}
